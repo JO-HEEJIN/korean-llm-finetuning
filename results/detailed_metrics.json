@@ -1,0 +1,38 @@
+{
+  "benchmark_info": {
+    "model": "Qwen/Qwen2.5-3B-Instruct",
+    "max_tokens": 128,
+    "note": "Run benchmarks to populate this file"
+  },
+  "vllm": {
+    "statistics": {
+      "framework": "vllm",
+      "avg_latency_ms": 0,
+      "p50_latency_ms": 0,
+      "p99_latency_ms": 0,
+      "avg_tokens_per_sec": 0
+    }
+  },
+  "tgi": {
+    "statistics": {
+      "framework": "tgi",
+      "avg_latency_ms": 0,
+      "p50_latency_ms": 0,
+      "p99_latency_ms": 0,
+      "avg_tokens_per_sec": 0
+    }
+  },
+  "transformers": {
+    "statistics": {
+      "framework": "transformers",
+      "avg_latency_ms": 0,
+      "p50_latency_ms": 0,
+      "p99_latency_ms": 0,
+      "avg_tokens_per_sec": 0
+    }
+  },
+  "load_test": {
+    "vllm": [],
+    "tgi": []
+  }
+}

@@ -1,196 +1,156 @@
-# On-Premise LLM Server
+# LLM Serving Benchmark
 
-사내망/로컬 환경에서 LLM을 서빙하는 프로덕션 레벨 시스템
+vLLM vs TGI vs Transformers 성능 비교 벤치마크
 
 ## Overview
 
-vLLM을 백엔드로 사용하여 OpenAI 호환 API를 제공합니다.
-
-### Features
-
-- OpenAI 호환 REST API
-- 인증 (API Key)
-- 레이트 리밋
-- 요청 로깅
-- Prometheus 메트릭
-- 헬스체크
-- Nginx 리버스 프록시
+세 가지 LLM 서빙 방식의 성능을 비교합니다:
+- **vLLM**: 고성능 LLM 서빙 엔진
+- **TGI**: HuggingFace Text Generation Inference
+- **Transformers**: 직접 추론 (베이스라인)
 
 ## Project Structure
 
 ```
-onprem-llm-server/
-├── docker-compose.yaml   # 컨테이너 구성
-├── Dockerfile            # API 서버 이미지
-├── api_server.py         # FastAPI 서버
-├── client.py             # API 클라이언트 예제
-├── config.py             # 설정 관리
-├── health_check.py       # 헬스체크 유틸리티
-├── nginx/
-│   └── nginx.conf        # Nginx 설정
+llm-serving-benchmark/
+├── benchmark_vllm.py         # vLLM 벤치마크
+├── benchmark_tgi.py          # TGI 벤치마크
+├── benchmark_transformers.py # Transformers 벤치마크
+├── load_test.py              # 동시 요청 부하 테스트
+├── analyze_results.py        # 결과 분석 및 시각화
+├── docker-compose.yaml       # vLLM, TGI 컨테이너
+├── results/
+│   ├── benchmark_comparison.png
+│   ├── detailed_metrics.json
+│   └── summary.md
 ├── requirements.txt
 └── README.md
 ```
 
+## Benchmark Metrics
+
+| Metric | Description |
+|--------|-------------|
+| Latency | 요청당 응답 시간 (ms) |
+| Throughput | 초당 생성 토큰 수 (tokens/sec) |
+| RPS | 초당 처리 요청 수 |
+| P50/P90/P99 | 백분위 지연 시간 |
+
 ## Quick Start
 
-### 1. Environment Setup
+### 1. Install Dependencies
 
 ```bash
-# .env 파일 생성
-cat > .env << EOF
-MODEL_NAME=Qwen/Qwen2.5-3B-Instruct
-ENABLE_AUTH=false
-API_KEY=your-secret-key
-GPU_MEMORY_UTILIZATION=0.9
-MAX_MODEL_LEN=4096
-EOF
+pip install -r requirements.txt
 ```
 
-### 2. Start Services
+### 2. Start Serving Frameworks
 
 ```bash
-# 전체 스택 시작
+# vLLM + TGI 동시 실행 (2개 GPU 필요)
 docker-compose up -d
 
-# 로그 확인
-docker-compose logs -f
+# 모델 로딩 대기 (약 2분)
+sleep 120
+
+# 상태 확인
+curl http://localhost:8001/health  # vLLM
+curl http://localhost:8002/health  # TGI
 ```
 
-### 3. Test API
+### 3. Run Benchmarks
 
 ```bash
-# Health check
-curl http://localhost:8000/health
+# 개별 벤치마크
+python benchmark_vllm.py --requests 100
+python benchmark_tgi.py --requests 100
+python benchmark_transformers.py --requests 50
 
-# Chat completion
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "default",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+# 부하 테스트
+python load_test.py --concurrency 10 50 100 --requests 100
+
+# 결과 분석 및 시각화
+python analyze_results.py
 ```
 
-## API Endpoints
+## Benchmark Scenarios
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/chat/completions` | POST | Chat completion (OpenAI compatible) |
-| `/v1/completions` | POST | Text completion |
-| `/v1/models` | GET | List available models |
-| `/health` | GET | Health check |
-| `/metrics` | GET | Prometheus metrics |
+### 1. Single Request Latency
+다양한 입력/출력 길이에서 단일 요청 지연 시간 측정
+
+### 2. Throughput
+배치 크기별 초당 처리량 측정
+
+### 3. Concurrent Requests
+10, 50, 100 동시 요청 처리 성능
+
+### 4. Memory Usage
+GPU 메모리 사용량 비교
+
+## Expected Results
+
+| Framework | Avg Latency | Throughput | Concurrent Handling |
+|-----------|-------------|------------|---------------------|
+| vLLM | Low | High | Excellent |
+| TGI | Medium | Medium-High | Good |
+| Transformers | High | Low | Poor |
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MODEL_NAME` | Qwen/Qwen2.5-3B-Instruct | HuggingFace model name |
-| `MODEL_PATH` | ./models | Local model path |
-| `TENSOR_PARALLEL_SIZE` | 1 | GPU parallelism |
-| `GPU_MEMORY_UTILIZATION` | 0.9 | GPU memory usage ratio |
-| `MAX_MODEL_LEN` | 4096 | Maximum sequence length |
-| `ENABLE_AUTH` | false | Enable API authentication |
-| `API_KEY` | - | API key for authentication |
-| `RATE_LIMIT_REQUESTS` | 60 | Requests per minute |
-| `LOG_LEVEL` | INFO | Logging level |
+```bash
+# Model selection
+export MODEL_NAME=Qwen/Qwen2.5-3B-Instruct
 
-## Client Usage
-
-### Python (OpenAI SDK)
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:8000/v1",
-    api_key="your-api-key"
-)
-
-response = client.chat.completions.create(
-    model="default",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-print(response.choices[0].message.content)
+# GPU allocation
+export CUDA_VISIBLE_DEVICES=0,1
 ```
 
-### curl
+### docker-compose.yaml
+
+- `vllm`: GPU 0, Port 8001
+- `tgi`: GPU 1, Port 8002
+
+## Output Files
+
+### results/benchmark_comparison.png
+성능 비교 차트:
+- Latency comparison
+- Throughput comparison
+- Load test results
+
+### results/detailed_metrics.json
+상세 측정 데이터 (JSON 형식)
+
+### results/summary.md
+마크다운 형식 결과 요약
+
+## Single GPU Setup
+
+GPU가 1개인 경우:
 
 ```bash
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{
-    "model": "default",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "temperature": 0.7,
-    "max_tokens": 256
-  }'
-```
+# vLLM만 실행
+docker-compose up vllm -d
 
-## Performance Tuning
-
-### GPU Memory
-
-```bash
-# 더 많은 GPU 메모리 사용
-GPU_MEMORY_UTILIZATION=0.95 docker-compose up -d
-```
-
-### Multiple GPUs
-
-```bash
-# 2개 GPU 사용
-TENSOR_PARALLEL_SIZE=2 docker-compose up -d
-```
-
-### Batch Size
-
-vLLM은 자동으로 요청을 배치 처리합니다. `MAX_MODEL_LEN`을 조정하여 처리량을 최적화할 수 있습니다.
-
-## Monitoring
-
-### Prometheus Metrics
-
-- `llm_requests_total`: 총 요청 수
-- `llm_request_latency_seconds`: 요청 지연 시간
-- `llm_tokens_total`: 총 토큰 수
-
-### Health Check
-
-```bash
-# API 서버 상태
-curl http://localhost:8000/health
-
-# vLLM 백엔드 상태
-curl http://localhost:8001/health
+# 또는 TGI만 실행
+docker-compose up tgi -d
 ```
 
 ## Troubleshooting
 
-### GPU not detected
-
-```bash
-# NVIDIA driver 확인
-nvidia-smi
-
-# Docker GPU 지원 확인
-docker run --rm --gpus all nvidia/cuda:11.8-base nvidia-smi
-```
-
 ### Out of Memory
+- `--gpu-memory-utilization` 값 낮추기
+- `--max-model-len` 값 줄이기
 
-- `GPU_MEMORY_UTILIZATION` 값 낮추기
-- `MAX_MODEL_LEN` 값 줄이기
-- 더 작은 모델 사용
+### Slow Model Loading
+- HuggingFace 캐시 확인
+- 네트워크 상태 확인
 
-### Slow Inference
-
-- `TENSOR_PARALLEL_SIZE` 증가 (멀티 GPU)
-- 모델 양자화 버전 사용
+### Connection Refused
+- 서비스 시작 후 충분한 대기 시간 필요
+- 헬스체크 엔드포인트 확인
 
 ## License
 

@@ -1,157 +1,61 @@
-# LLM Serving Benchmark
+# Korean LLM Fine-tuning: QLoRA on a Single T4
 
-vLLM vs TGI vs Transformers 성능 비교 벤치마크
+A small, fully reproducible QLoRA run on a Korean instruction dataset, measured before and after on the same held-out set. The short version: held-out loss went down, but reading the answers showed the model learned style rather than facts, and became more willing to answer questions it should not answer with confidence.
 
-## Overview
+## Setup
 
-세 가지 LLM 서빙 방식의 성능을 비교합니다:
-- **vLLM**: 고성능 LLM 서빙 엔진
-- **TGI**: HuggingFace Text Generation Inference
-- **Transformers**: 직접 추론 (베이스라인)
+| Item | Value |
+|---|---|
+| Base model | Qwen/Qwen2.5-1.5B-Instruct |
+| Data | beomi/KoAlpaca-v1.1a (instruction, output) |
+| Split | 2,000 train / 200 held-out eval / 20 held-out samples for side-by-side review, no overlap |
+| Method | QLoRA: 4-bit NF4 with double quantization, fp16 compute |
+| LoRA | r=16, alpha=32, dropout=0.05, targets q/k/v/o_proj, causal-LM objective |
+| Loss masking | system and user tokens masked; loss on the assistant answer only |
+| Training | 1 epoch, effective batch 16, lr 2e-4 cosine, max length 512 |
+| Hardware | Kaggle, one Tesla T4 |
+| Libraries | torch 2.11.0, transformers 5.18.0, peft 0.21.2, bitsandbytes 0.50.2, datasets 5.0.1 |
 
-## Project Structure
+## Results
 
-```
-llm-serving-benchmark/
-├── benchmark_vllm.py         # vLLM 벤치마크
-├── benchmark_tgi.py          # TGI 벤치마크
-├── benchmark_transformers.py # Transformers 벤치마크
-├── load_test.py              # 동시 요청 부하 테스트
-├── analyze_results.py        # 결과 분석 및 시각화
-├── docker-compose.yaml       # vLLM, TGI 컨테이너
-├── results/
-│   ├── benchmark_comparison.png
-│   ├── detailed_metrics.json
-│   └── summary.md
-├── requirements.txt
-└── README.md
-```
+| Metric (200 held-out examples) | Before | After |
+|---|---|---|
+| Eval loss | 2.032 | 1.919 |
+| Perplexity | 7.63 | 6.82 |
 
-## Benchmark Metrics
+Training took 14.1 minutes. Most of the drop happened in the first 25 steps (eval loss 2.03 to 1.94); the remaining 100 steps moved it only from 1.94 to 1.92.
 
-| Metric | Description |
-|--------|-------------|
-| Latency | 요청당 응답 시간 (ms) |
-| Throughput | 초당 생성 토큰 수 (tokens/sec) |
-| RPS | 초당 처리 요청 수 |
-| P50/P90/P99 | 백분위 지연 시간 |
+![Loss curve](results/loss_curve.png)
 
-## Quick Start
+## What the loss does not show
 
-### 1. Install Dependencies
+I read all 20 held-out answers before and after training (`results/samples_before_after.md`). This is a small sample and my own reading, not a validated grader, so treat it as a diagnosis rather than a score.
 
-```bash
-pip install -r requirements.txt
-```
+- **Facts did not improve.** After training the model still invents answers, sometimes more confidently than before (for example, describing a traditional holiday as a national flag, or claiming snakes have no bones).
+- **It stopped refusing.** On two questions where the base model declined to answer (food storage, a legal question), the fine-tuned model gave a confident and wrong answer. For a legal question that is a regression, not a gain.
+- **Language became more consistent.** The base model answered one question entirely in English and mixed Chinese into several; after training, answers stayed in Korean more often.
+- **Repetition appeared** in a few answers after training, with the same sentence looping.
+- **Some reference answers are outdated.** For example, one reference treats adultery as a crime in Korea, which the Constitutional Court struck down in 2015. Training on such data teaches outdated facts with confidence.
 
-### 2. Start Serving Frameworks
+Conclusion: lower loss here mostly means the model learned to sound like the dataset. I would not ship this adapter.
 
-```bash
-# vLLM + TGI 동시 실행 (2개 GPU 필요)
-docker-compose up -d
+## What I would change next
 
-# 모델 로딩 대기 (약 2분)
-sleep 120
+1. Evaluate correctness and refusal behavior directly, with a rubric and a grader validated against labeled examples, instead of relying on loss.
+2. Filter or date-check the training data, especially legal, medical, and other time-sensitive answers.
+3. Try the 3B model and compare with the same held-out set and the same review protocol.
+4. Add repetition and refusal-rate checks as regression tests before any adapter is used.
 
-# 상태 확인
-curl http://localhost:8001/health  # vLLM
-curl http://localhost:8002/health  # TGI
-```
+## Reproduce
 
-### 3. Run Benchmarks
+Open `korean_qlora_kaggle.ipynb` on Kaggle with the GPU T4 x2 accelerator and internet enabled, then run "Save & Run All". The notebook writes everything below to `results/`.
 
-```bash
-# 개별 벤치마크
-python benchmark_vllm.py --requests 100
-python benchmark_tgi.py --requests 100
-python benchmark_transformers.py --requests 50
+## Files
 
-# 부하 테스트
-python load_test.py --concurrency 10 50 100 --requests 100
+- `results/metrics.json`: before and after eval loss and perplexity, training time, GPU, library versions
+- `results/log_history.json`: train and eval loss over steps
+- `results/loss_curve.png`: the curve above
+- `results/samples_before_after.md`: 20 held-out questions with the reference, before, and after answers
+- `results/adapter/`: the LoRA adapter and tokenizer files
 
-# 결과 분석 및 시각화
-python analyze_results.py
-```
-
-## Benchmark Scenarios
-
-### 1. Single Request Latency
-다양한 입력/출력 길이에서 단일 요청 지연 시간 측정
-
-### 2. Throughput
-배치 크기별 초당 처리량 측정
-
-### 3. Concurrent Requests
-10, 50, 100 동시 요청 처리 성능
-
-### 4. Memory Usage
-GPU 메모리 사용량 비교
-
-## Expected Results
-
-| Framework | Avg Latency | Throughput | Concurrent Handling |
-|-----------|-------------|------------|---------------------|
-| vLLM | Low | High | Excellent |
-| TGI | Medium | Medium-High | Good |
-| Transformers | High | Low | Poor |
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Model selection
-export MODEL_NAME=Qwen/Qwen2.5-3B-Instruct
-
-# GPU allocation
-export CUDA_VISIBLE_DEVICES=0,1
-```
-
-### docker-compose.yaml
-
-- `vllm`: GPU 0, Port 8001
-- `tgi`: GPU 1, Port 8002
-
-## Output Files
-
-### results/benchmark_comparison.png
-성능 비교 차트:
-- Latency comparison
-- Throughput comparison
-- Load test results
-
-### results/detailed_metrics.json
-상세 측정 데이터 (JSON 형식)
-
-### results/summary.md
-마크다운 형식 결과 요약
-
-## Single GPU Setup
-
-GPU가 1개인 경우:
-
-```bash
-# vLLM만 실행
-docker-compose up vllm -d
-
-# 또는 TGI만 실행
-docker-compose up tgi -d
-```
-
-## Troubleshooting
-
-### Out of Memory
-- `--gpu-memory-utilization` 값 낮추기
-- `--max-model-len` 값 줄이기
-
-### Slow Model Loading
-- HuggingFace 캐시 확인
-- 네트워크 상태 확인
-
-### Connection Refused
-- 서비스 시작 후 충분한 대기 시간 필요
-- 헬스체크 엔드포인트 확인
-
-## License
-
-MIT License
+Earlier work in this repository (GPTQ and GGUF quantization scripts and a vLLM, TGI, and Transformers serving benchmark) was written but not yet run; those results are not reported here. The serving benchmark is documented in [`serving-benchmark/README.md`](serving-benchmark/README.md).

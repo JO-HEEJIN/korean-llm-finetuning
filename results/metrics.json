@@ -1,0 +1,33 @@
+{
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "dataset": "beomi/KoAlpaca-v1.1a",
+ "n_train": 2000,
+ "n_eval_heldout": 200,
+ "n_samples": 20,
+ "max_len": 512,
+ "lora": {
+  "r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ]
+ },
+ "quantization": "4-bit NF4, double quant, fp16 compute",
+ "eval_loss_before": 2.0323,
+ "eval_loss_after": 1.9194,
+ "perplexity_before": 7.63,
+ "perplexity_after": 6.82,
+ "train_minutes": 14.1,
+ "gpu": "Tesla T4",
+ "versions": {
+  "torch": "2.11.0+cu128",
+  "transformers": "5.18.0",
+  "peft": "0.21.2",
+  "bitsandbytes": "0.50.2",
+  "datasets": "5.0.1"
+ }
+}
